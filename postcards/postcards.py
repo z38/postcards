@@ -24,6 +24,11 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO,
 DEFAULT_KEY = 'olMcxzq9Cq5lJpsoh4FvPKU'
 
 
+class Token:
+    def __init__(self, token):
+        self.token = token
+
+
 class Postcards:
     def __init__(self, logger=None):
         self.logger = self._create_logger(logger)
@@ -171,24 +176,26 @@ class Postcards:
         try_again_after = ''
 
         for account in accounts:
-            token = postcard_creator.Token()
-            if token.has_valid_credentials(account.get('username'), account.get('password')):
-                pcc = postcard_creator.PostcardCreator(token)
-                if pcc.has_free_postcard():
-                    pcc_wrappers.append(pcc)
-                    self.logger.info('account {} is valid'.format(account.get("username")))
-                    if stop_on_first_valid:
-                        break
-                else:
-                    next_quota = pcc.get_quota().get('next')
-                    if next_quota < try_again_after or try_again_after is '':
-                        try_again_after = next_quota
-
-                    self.logger.debug('account {} is invalid. '.format(account.get("username")) +
-                                      'new quota available after {}.'.format(next_quota))
+            if 'token' in account:
+                token = Token(account['token'])
             else:
-                self.logger.warning('wrong user credentials '
-                                    'for {}'.format(account.get("username")))
+                token = postcard_creator.Token()
+                if not token.has_valid_credentials(account.get('username'), account.get('password')):
+                    self.logger.warning('wrong user credentials for {}'.format(account.get("username")))
+
+            pcc = postcard_creator.PostcardCreator(token)
+            if pcc.has_free_postcard():
+                pcc_wrappers.append(pcc)
+                self.logger.info('account {} is valid'.format(account.get("username")))
+                if stop_on_first_valid:
+                    break
+            else:
+                next_quota = pcc.get_quota().get('next')
+                if next_quota < try_again_after or try_again_after is '':
+                    try_again_after = next_quota
+
+                self.logger.debug('account {} is invalid. '.format(account.get("username")) +
+                                  'new quota available after {}.'.format(next_quota))
 
         return pcc_wrappers, try_again_after
 
@@ -209,7 +216,11 @@ class Postcards:
 
     def _get_accounts(self, config, key=None, username=None, password=None):
         accounts = []
-        if username and password:
+        if 'POSTCARDS_TOKEN' in os.environ:
+            accounts.append({
+                'token': os.environ['POSTCARDS_TOKEN'],
+            })
+        elif username and password:
             self.logger.debug('using command line args as username and password')
             accounts.append({
                 'username': username,
@@ -217,10 +228,9 @@ class Postcards:
             })
         else:
             for account in config.get('accounts'):
-                accounts.append({
-                    'username': account.get('username'),
-                    'password': account.get('password') if not key else self._decrypt(key, account.get('password'))
-                })
+                if key:
+                    account = dict(account, password=self._decrypt(key, account.get('password')))
+                accounts.append(account)
         return accounts
 
     def _parse_key(self, args):
